@@ -11,6 +11,8 @@ using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
+const string FrontendCorsPolicy = "FrontendCorsPolicy";
+
 // Add configuration for AWS settings
 builder.Services.AddOptions<AwsSettings>()
     .Bind(builder.Configuration.GetSection(AwsSettings.SectionName))
@@ -41,6 +43,18 @@ builder.Services.AddControllers();
 builder.Services.AddFluentValidationAutoValidation();
 builder.Services.AddValidatorsFromAssemblyContaining<BillingSummaryFilterRequestValidator>();
 
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy(FrontendCorsPolicy, policy =>
+    {
+        policy.WithOrigins(
+                "http://localhost:5173",
+                "http://127.0.0.1:5173")
+            .AllowAnyHeader()
+            .AllowAnyMethod();
+    });
+});
+
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
 
@@ -57,6 +71,7 @@ if (app.Environment.IsDevelopment())
     });
 }
 
+app.UseCors(FrontendCorsPolicy);
 app.UseAuthorization();
 
 app.MapControllers();
