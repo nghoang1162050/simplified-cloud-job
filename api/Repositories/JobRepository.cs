@@ -41,4 +41,11 @@ public class JobRepository(AppDbContext context) : GenericRepository<JobEntity>(
 
         return new PagedResult<JobEntity>(items, page, pageSize, totalCount);
     }
+
+    public async Task<JobEntity?> GetByHashAsync(string requestHash)
+    {
+        return await _context.Jobs
+            .AsNoTracking()
+            .FirstOrDefaultAsync(j => j.RequestHash == requestHash);
+    }
 }

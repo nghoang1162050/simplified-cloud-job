@@ -1,6 +1,8 @@
 ﻿using api.Entities;
 using api.Models;
 using api.Repositories;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace api.Services;
 
@@ -10,9 +12,19 @@ public class JobServices(IJobRepository jobRepository) : IJobServices
 
     public async Task<ApiResponse<JobModel>> SubmitJobAsync(CreateJobRequest request)
     {
-        // TODO: check same request already exists in db, if yes return existing job id and status, hash request then check if hash exists in memory
+        string requestHash = ComputeRequestHash(request);
+        var existingJob = await _jobRepository.GetByHashAsync(requestHash);
+        if (existingJob != null)
+        {
+            var existingJobModel = MapToJobModel(existingJob);
+            return ApiResponse<JobModel>.SuccessResponse(
+                existingJobModel,
+                "An identical job request is already processing or completed. Returned existing job."
+            );
+        }
 
         // TODO: put file to s3
+        string fileStorageReference = $"s3://my-bucket/inputs/{request.ProjectId}/{Guid.NewGuid()}_{request.InputFileName}";
 
         var newJobEntity = new JobEntity
         {
@@ -22,10 +34,11 @@ public class JobServices(IJobRepository jobRepository) : IJobServices
             ComputeType = request.ComputeType,
             Status = JobStatusEnums.Submitted.ToString(),
             OutputFileReference = null,
-            InputFileName = request.InputFileName,
+            InputFileName = fileStorageReference,
             ExecutionDuration = 0,
             CreditCost = 0,
-            CreatedAt = DateTime.UtcNow
+            CreatedAt = DateTime.UtcNow,
+            RequestHash = requestHash
         };
 
         await _jobRepository.AddAsync(newJobEntity);
@@ -139,4 +152,31 @@ public class JobServices(IJobRepository jobRepository) : IJobServices
 
         return ApiResponse<BillingSummaryResponse>.SuccessResponse(summaryData, "Billing summary aggregated and paged successfully.");
     }
+
+    #region Helper Methods (Senior Clean Code Clean-up)
+
+    private static string ComputeRequestHash(CreateJobRequest request)
+    {
+        string rawData = $"{request.JobName}_{request.ProjectId}_{request.ComputeType}_{request.InputFileName}";
+
+        using var sha256 = SHA256.Create();
+        byte[] bytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(rawData));
+        return Convert.ToHexString(bytes);
+    }
+
+    private static JobModel MapToJobModel(JobEntity entity)
+    {
+        return new JobModel
+        {
+            JobId = entity.JobId,
+            JobName = entity.JobName,
+            ProjectId = entity.ProjectId,
+            ComputeType = entity.ComputeType,
+            InputFileName = entity.InputFileName,
+            Status = entity.Status.ToString(),
+            CreatedAt = entity.CreatedAt
+        };
+    }
+
+    #endregion
 }

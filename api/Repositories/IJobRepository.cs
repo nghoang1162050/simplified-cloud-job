@@ -10,4 +10,6 @@ public interface IJobRepository : IGenericRepository<JobEntity>
       string? computeType,
       int page,
       int pageSize);
+
+    public Task<JobEntity?> GetByHashAsync(string requestHash);
 }

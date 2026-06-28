@@ -14,4 +14,5 @@ public class JobEntity
     public int ExecutionDuration { get; set; }
     public double CreditCost { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public string RequestHash { get; set; } = string.Empty;
 }

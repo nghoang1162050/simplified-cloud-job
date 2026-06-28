@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using api.Entities;
 
@@ -11,9 +12,11 @@ using api.Entities;
 namespace api.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260628135125_AddRequestHashToJob")]
+    partial class AddRequestHashToJob
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -68,7 +71,7 @@ namespace api.Migrations
 
                     b.Property<string>("RequestHash")
                         .IsRequired()
-                        .HasColumnType("char(64)")
+                        .HasColumnType("varchar(255)")
                         .HasColumnName("RequestHash");
 
                     b.Property<string>("Status")
@@ -80,10 +83,6 @@ namespace api.Migrations
 
                     b.HasIndex("ProjectId")
                         .HasDatabaseName("IX_Jobs_ProjectId");
-
-                    b.HasIndex("RequestHash")
-                        .IsUnique()
-                        .HasDatabaseName("IX_Jobs_RequestHash_Unique");
 
                     b.HasIndex("Status")
                         .HasDatabaseName("IX_Jobs_Status");
