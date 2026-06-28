@@ -1,9 +1,19 @@
+using api.Entities;
 using api.Models;
+using api.Repositories;
 using api.Services;
 using FluentValidation;
 using FluentValidation.AspNetCore;
+using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Add database context for Entity Framework Core with SQL Server
+builder.Services.AddDbContext<AppDbContext>(options =>
+    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+
+builder.Services.AddScoped(typeof(IGenericRepository<>), typeof(GenericRepository<>));
+builder.Services.AddScoped<IJobRepository, JobRepository>();
 
 // Add services for dependency injection
 builder.Services.AddScoped<IJobServices, JobServices>();
