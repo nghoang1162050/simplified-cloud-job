@@ -9,8 +9,8 @@ using System.Text;
 namespace api.Services;
 
 public class JobServices(
-    IJobRepository jobRepository, 
-    IStorageService storageService, 
+    IJobRepository jobRepository,
+    IStorageService storageService,
     IComputeExecutionService computeExecutionService,
     IOptions<AwsSettings> awsOptions) : IJobServices
 {
@@ -21,66 +21,35 @@ public class JobServices(
 
     public async Task<ApiResponse<JobModel>> SubmitJobAsync(CreateJobRequest request)
     {
+        // 1. Initialize and compute unique request identification data
         string originalFileName = $"input_{request.File.FileName}";
-        string rawData = $"{request.ProjectId}_{request.ComputeType}_{originalFileName}";
-        string requestHash = ComputeRequestHash(rawData);
+        string requestHash = GenerateRequestHash(request.ProjectId, request.ComputeType, originalFileName);
 
-        // Check for existing job with the same hash to prevent duplicate processing
+        // 2. State Guard Clause: Enforce Idempotency to prevent duplicate job processing
         var existingJob = await _jobRepository.GetByHashAsync(requestHash);
         if (existingJob != null)
         {
-            var existingJobModel = MapToJobModel(existingJob);
             return ApiResponse<JobModel>.SuccessResponse(
-                existingJobModel,
+                MapToJobModel(existingJob),
                 "An identical job request is already processing or completed. Returned existing job."
             );
         }
 
-        // Upload the file to S3 and get the storage reference
-        Stream fileStream = request.File.OpenReadStream();
-        string fileStorageReference = await _storageService.UploadFileAsync(fileStream, originalFileName, requestHash);
+        // 3. Offload binary payload stream storage to AWS S3 Cloud
+        string fileStorageReference = await UploadInputFileToS3Async(request.File, originalFileName, requestHash);
 
-        var newJobEntity = new JobEntity
-        {
-            JobId = Guid.NewGuid().ToString(),
-            JobName = request.JobName,
-            ProjectId = request.ProjectId,
-            ComputeType = request.ComputeType,
-            Status = JobStatusEnums.Submitted.ToString(),
-            OutputFileReference = null,
-            InputFileName = fileStorageReference,
-            ExecutionDuration = 0,
-            CreditCost = 0,
-            CreatedAt = DateTime.UtcNow,
-            RequestHash = requestHash
-        };
-
+        // 4. Factory initialization and persistence to relational Database
+        var newJobEntity = CreateInitialJobEntity(request, requestHash, fileStorageReference);
         await _jobRepository.AddAsync(newJobEntity);
 
-        var jobModel = new JobModel
+        // 5. Trigger remote infrastructure compute workload asynchronously via AWS SSM
+        var (IsSuccess, ErrorMessage) = await TryTriggerEc2AutomationAsync(newJobEntity.JobId);
+        if (!IsSuccess)
         {
-            JobId = newJobEntity.JobId,
-            JobName = newJobEntity.JobName,
-            ProjectId = newJobEntity.ProjectId,
-            ComputeType = newJobEntity.ComputeType,
-            InputFileName = fileStorageReference,
-            Status = newJobEntity.Status.ToString(),
-            CreatedAt = newJobEntity.CreatedAt
-        };
-
-        // Trigger EC2 job execution (this is a placeholder; actual implementation would depend on your EC2 setup)
-        string apiBaseUrl = _awsSettings.ApiBaseUrl;
-        string bashCommand = BuildEc2UtcTimestampAndCompleteCommand(newJobEntity.JobId, apiBaseUrl);
-
-        try
-        {
-            await _computeExecutionService.TriggerRemoteCommandAsync(bashCommand);
-        }
-        catch (Exception ex)
-        {
-            return ApiResponse<JobModel>.ErrorResponse($"Job created, but EC2 execution loop failed: {ex.Message}");
+            return ApiResponse<JobModel>.ErrorResponse(ErrorMessage);
         }
 
+        // 6. Return a clean, mapped Data Transfer Object (DTO) payload to the client
         return ApiResponse<JobModel>.SuccessResponse(MapToJobModel(newJobEntity), "Job submitted and automation loop triggered.");
     }
 
@@ -112,42 +81,29 @@ public class JobServices(
 
     public async Task<ApiResponse<JobModelBase>> CompleteJobAsync(string jobId, CompleteJobRequest request)
     {
-        // TODO: will make a function to calculate the credit cost based on execution duration and compute type in the future
-        const double CreditRatePerSecond = 0.05;
-
+        // 1. Retrieve the target job entity from the database
         var jobEntity = await _jobRepository.GetByIdAsync(jobId);
         if (jobEntity == null)
         {
             return ApiResponse<JobModelBase>.ErrorResponse($"Job with ID '{jobId}' was not found.");
         }
 
-        if (jobEntity.Status == JobStatusEnums.Completed.ToString())
+        // 2. State Guard Clause: Prevent processing if the job has already been completed
+        if (IsJobAlreadyCompleted(jobEntity))
         {
             return ApiResponse<JobModelBase>.ErrorResponse($"Job with ID '{jobId}' is already finalized. Cannot complete again.");
         }
 
+        // 3. Process and upload the output binary artifact to AWS S3
         string originalOutputName = $"output_{request.OutputFile.FileName}";
-        string s3OutputKey;
+        string s3OutputKey = await UploadOutputFileToS3Async(request.OutputFile, originalOutputName, jobEntity.RequestHash);
 
-        using (var outputStream = request.OutputFile.OpenReadStream())
-        {
-            s3OutputKey = await _storageService.UploadFileAsync(outputStream, originalOutputName, jobEntity.RequestHash);
-        }
-
-        jobEntity.ExecutionDuration = request.ExecutionDuration;
-        jobEntity.OutputFileReference = s3OutputKey;
-        jobEntity.Status = JobStatusEnums.Completed.ToString();
-        jobEntity.CreditCost = Math.Round(request.ExecutionDuration * CreditRatePerSecond, 2);
-
+        // 4. Update state mutation and calculate billing costs
+        FinalizeJobEntityState(jobEntity, request.ExecutionDuration, s3OutputKey);
         await _jobRepository.UpdateAsync(jobEntity);
 
-        var resultPayload = new JobModelBase
-        {
-            JobId = jobEntity.JobId,
-            ExecutionDuration = jobEntity.ExecutionDuration,
-            OutputFileReference = jobEntity.OutputFileReference
-        };
-
+        // 5. Construct and return the finalized clean DTO payload
+        var resultPayload = MapToJobModelBase(jobEntity);
         return ApiResponse<JobModelBase>.SuccessResponse(resultPayload, "Job successfully finalized and cloud credit billing applied.");
     }
 
@@ -202,6 +158,64 @@ public class JobServices(
         return Convert.ToHexString(bytes);
     }
 
+    /// <summary>
+    /// Computes a unique SHA256 request hash based on business boundary data.
+    /// </summary>
+    private static string GenerateRequestHash(string projectId, ComputeTypeEnums computeType, string fileName)
+    {
+        string rawData = $"{projectId}_{computeType}_{fileName}";
+        return ComputeRequestHash(rawData);
+    }
+
+    /// <summary>
+    /// Safely opens the file stream and uploads the input payload to AWS S3.
+    /// </summary>
+    private async Task<string> UploadInputFileToS3Async(IFormFile file, string fileName, string requestHash)
+    {
+        using var fileStream = file.OpenReadStream();
+        return await _storageService.UploadFileAsync(fileStream, fileName, requestHash);
+    }
+
+    /// <summary>
+    /// Factory method to isolate the initialization of a fresh JobEntity.
+    /// </summary>
+    private static JobEntity CreateInitialJobEntity(CreateJobRequest request, string requestHash, string storageReference)
+    {
+        return new JobEntity
+        {
+            JobId = Guid.NewGuid().ToString(),
+            JobName = request.JobName,
+            ProjectId = request.ProjectId,
+            ComputeType = request.ComputeType,
+            Status = JobStatusEnums.Submitted.ToString(),
+            OutputFileReference = null,
+            InputFileName = storageReference,
+            ExecutionDuration = 0,
+            CreditCost = 0,
+            CreatedAt = DateTime.UtcNow,
+            RequestHash = requestHash
+        };
+    }
+
+    /// <summary>
+    /// Wraps the remote EC2 SSM trigger invocation with structured error handling.
+    /// </summary>
+    private async Task<(bool IsSuccess, string ErrorMessage)> TryTriggerEc2AutomationAsync(string jobId)
+    {
+        string bashCommand = BuildEc2UtcTimestampAndCompleteCommand(jobId, _awsSettings.ApiBaseUrl);
+
+        try
+        {
+            await _computeExecutionService.TriggerRemoteCommandAsync(bashCommand);
+            return (true, string.Empty);
+        }
+        catch (Exception ex)
+        {
+            // Return a clean descriptive tuple state instead of throwing or swallowing errors abruptly
+            return (false, $"Job created, but EC2 execution loop failed: {ex.Message}");
+        }
+    }
+
     private static JobModel MapToJobModel(JobEntity entity)
     {
         return new JobModel
@@ -213,6 +227,50 @@ public class JobServices(
             InputFileName = entity.InputFileName,
             Status = entity.Status.ToString(),
             CreatedAt = entity.CreatedAt
+        };
+    }
+
+    /// <summary>
+    /// Evaluates whether the job entity has already transitioned to a Completed state.
+    /// </summary>
+    private static bool IsJobAlreadyCompleted(JobEntity jobEntity)
+    {
+        return jobEntity.Status == JobStatusEnums.Completed.ToString();
+    }
+
+    /// <summary>
+    /// Safely opens the output file stream and offloads it to the chronological S3 bucket infrastructure.
+    /// </summary>
+    private async Task<string> UploadOutputFileToS3Async(IFormFile file, string fileName, string requestHash)
+    {
+        using var outputStream = file.OpenReadStream();
+        return await _storageService.UploadFileAsync(outputStream, fileName, requestHash);
+    }
+
+    /// <summary>
+    /// Mutates the entity's state to a finalized state and dynamically computes the billing credit costs.
+    /// </summary>
+    private static void FinalizeJobEntityState(JobEntity jobEntity, int executionDuration, string s3OutputKey)
+    {
+        // TODO: Migrate this hardcoded rate into a dynamic strategy configuration based on ComputeType in the future
+        const double CreditRatePerSecond = 0.05;
+
+        jobEntity.ExecutionDuration = executionDuration;
+        jobEntity.OutputFileReference = s3OutputKey;
+        jobEntity.Status = JobStatusEnums.Completed.ToString();
+        jobEntity.CreditCost = Math.Round(executionDuration * CreditRatePerSecond, 2);
+    }
+
+    /// <summary>
+    /// Direct mapping factory from the updated Domain Entity to the lightweight JobModelBase DTO.
+    /// </summary>
+    private static JobModelBase MapToJobModelBase(JobEntity jobEntity)
+    {
+        return new JobModelBase
+        {
+            JobId = jobEntity.JobId,
+            ExecutionDuration = jobEntity.ExecutionDuration,
+            OutputFileReference = jobEntity.OutputFileReference
         };
     }
 
