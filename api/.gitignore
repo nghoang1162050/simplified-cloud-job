@@ -1,0 +1,61 @@
+# Visual Studio / Rider / VS Code
+.vs/
+.vscode/
+.idea/
+
+# User-specific files
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Build output
+[Bb]in/
+[Oo]bj/
+out/
+dist/
+publish/
+
+# Rider caches
+.idea/
+
+# NuGet
+packages/
+*.nupkg
+.nuget/packages/
+
+# SDK-style and project files
+project.lock.json
+project.fragment.lock.json
+
+# ASP.NET Core / secrets / launch settings
+appsettings.Development.json
+appsettings.*.Local.json
+secrets.json
+
+# Test results and coverage
+TestResults/
+*.trx
+*.coverage
+coverage.* 
+
+# Database files
+*.mdf
+*.ldf
+*.sqlite
+*.db
+
+# Logs, temp files
+*.log
+*.tmp
+*.temp
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Node/npm (if frontend assets present)
+node_modules/
+
+# VSIX / tooling
+*.vsix
