@@ -1,3 +1,5 @@
+using Amazon.S3;
+using api.Configurations;
 using api.Entities;
 using api.Models;
 using api.Repositories;
@@ -7,6 +9,17 @@ using FluentValidation.AspNetCore;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Add configuration for AWS settings
+builder.Services.AddOptions<AwsSettings>()
+    .Bind(builder.Configuration.GetSection(AwsSettings.SectionName))
+    .Validate(settings => !string.IsNullOrWhiteSpace(settings.BucketName), "AWS BucketName is required.")
+    .Validate(settings => !string.IsNullOrWhiteSpace(settings.Region), "AWS Region is required.")
+    .ValidateOnStart();
+
+// Add external services for dependency injection
+builder.Services.AddAWSService<IAmazonS3>();
+builder.Services.AddScoped<IStorageService, S3StorageService>();
 
 // Add database context for Entity Framework Core with SQL Server
 builder.Services.AddDbContext<AppDbContext>(options =>
@@ -21,8 +34,6 @@ builder.Services.AddScoped<IJobServices, JobServices>();
 // Add validation for request models using FluentValidation
 builder.Services.AddControllers();
 builder.Services.AddFluentValidationAutoValidation();
-builder.Services.AddValidatorsFromAssemblyContaining<CreateJobRequestValidator>();
-builder.Services.AddValidatorsFromAssemblyContaining<CompleteJobRequestValidator>();
 builder.Services.AddValidatorsFromAssemblyContaining<BillingSummaryFilterRequestValidator>();
 
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi

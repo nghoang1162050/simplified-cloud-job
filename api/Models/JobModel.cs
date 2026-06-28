@@ -1,4 +1,6 @@
-﻿namespace api.Models;
+﻿using System.ComponentModel.DataAnnotations;
+
+namespace api.Models;
 
 public class JobModelBase
 {
@@ -18,14 +20,27 @@ public class JobModel : JobModelBase
     public DateTime CreatedAt { get; set; }
 }
 
-public record CreateJobRequest(
-    string JobName,
-    string ProjectId,
-    ComputeTypeEnums ComputeType,
-    string InputFileName
-);
+public class CreateJobRequest
+{
+    [Required]
+    public string JobName { get; set; } = string.Empty;
 
-public record CompleteJobRequest(
-    int ExecutionDuration,
-    string OutputFileReference
-);
+    [Required]
+    public string ProjectId { get; set; } = string.Empty;
+
+    [Required]
+    public ComputeTypeEnums ComputeType { get; set; }
+
+    [Required]
+    public IFormFile File { get; set; } = null!;
+}
+
+public class CompleteJobRequest
+{
+    [Required]
+    [Range(1, int.MaxValue, ErrorMessage = "Execution duration must be at least 1 second.")]
+    public int ExecutionDuration { get; set; }
+
+    [Required]
+    public IFormFile OutputFile { get; set; } = null!;
+}

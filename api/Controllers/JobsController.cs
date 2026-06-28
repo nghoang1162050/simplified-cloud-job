@@ -11,8 +11,9 @@ public class JobsController(IJobServices jobServices) : ControllerBase
     private readonly IJobServices _jobServices = jobServices;
 
     [HttpPost]
+    [Consumes("multipart/form-data")]
     [EndpointSummary("Submit and trigger a new cloud job")]
-    public async Task<IActionResult> Post([FromBody] CreateJobRequest request)
+    public async Task<IActionResult> Post([FromForm] CreateJobRequest request)
     {
         var response = await _jobServices.SubmitJobAsync(request);
         return Created($"api/jobs/{response.Data?.JobId}", response);

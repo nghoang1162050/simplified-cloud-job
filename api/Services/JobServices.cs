@@ -6,13 +6,18 @@ using System.Text;
 
 namespace api.Services;
 
-public class JobServices(IJobRepository jobRepository) : IJobServices
+public class JobServices(IJobRepository jobRepository, IStorageService storageService) : IJobServices
 {
     private readonly IJobRepository _jobRepository = jobRepository;
+    private readonly IStorageService _storageService = storageService;
 
     public async Task<ApiResponse<JobModel>> SubmitJobAsync(CreateJobRequest request)
     {
-        string requestHash = ComputeRequestHash(request);
+        string originalFileName = $"input_{request.File.FileName}";
+        string rawData = $"{request.ProjectId}_{request.ComputeType}_{originalFileName}";
+        string requestHash = ComputeRequestHash(rawData);
+
+        // Check for existing job with the same hash to prevent duplicate processing
         var existingJob = await _jobRepository.GetByHashAsync(requestHash);
         if (existingJob != null)
         {
@@ -23,8 +28,9 @@ public class JobServices(IJobRepository jobRepository) : IJobServices
             );
         }
 
-        // TODO: put file to s3
-        string fileStorageReference = $"s3://my-bucket/inputs/{request.ProjectId}/{Guid.NewGuid()}_{request.InputFileName}";
+        // Upload the file to S3 and get the storage reference
+        Stream fileStream = request.File.OpenReadStream();
+        string fileStorageReference = await _storageService.UploadFileAsync(fileStream, originalFileName, requestHash);
 
         var newJobEntity = new JobEntity
         {
@@ -49,7 +55,7 @@ public class JobServices(IJobRepository jobRepository) : IJobServices
             JobName = newJobEntity.JobName,
             ProjectId = newJobEntity.ProjectId,
             ComputeType = newJobEntity.ComputeType,
-            InputFileName = request.InputFileName,
+            InputFileName = fileStorageReference,
             Status = newJobEntity.Status.ToString(),
             CreatedAt = newJobEntity.CreatedAt
         };
@@ -85,19 +91,32 @@ public class JobServices(IJobRepository jobRepository) : IJobServices
 
     public async Task<ApiResponse<JobModelBase>> CompleteJobAsync(string jobId, CompleteJobRequest request)
     {
-        var jobEntity = await _jobRepository.GetByIdAsync(jobId);
+        // TODO: will make a function to calculate the credit cost based on execution duration and compute type in the future
+        const double CreditRatePerSecond = 0.05;
 
+        var jobEntity = await _jobRepository.GetByIdAsync(jobId);
         if (jobEntity == null)
         {
             return ApiResponse<JobModelBase>.ErrorResponse($"Job with ID '{jobId}' was not found.");
         }
 
-        jobEntity.ExecutionDuration = request.ExecutionDuration;
-        jobEntity.OutputFileReference = request.OutputFileReference;
-        jobEntity.Status = JobStatusEnums.Completed.ToString();
+        if (jobEntity.Status == JobStatusEnums.Completed.ToString())
+        {
+            return ApiResponse<JobModelBase>.ErrorResponse($"Job with ID '{jobId}' is already finalized. Cannot complete again.");
+        }
 
-        // Example Business Logic: Calculate credit cost dynamically (e.g., 0.05 credits per second)
-        jobEntity.CreditCost = request.ExecutionDuration * 0.05;
+        string originalOutputName = $"output_{request.OutputFile.FileName}";
+        string s3OutputKey;
+
+        using (var outputStream = request.OutputFile.OpenReadStream())
+        {
+            s3OutputKey = await _storageService.UploadFileAsync(outputStream, originalOutputName, jobEntity.RequestHash);
+        }
+
+        jobEntity.ExecutionDuration = request.ExecutionDuration;
+        jobEntity.OutputFileReference = s3OutputKey;
+        jobEntity.Status = JobStatusEnums.Completed.ToString();
+        jobEntity.CreditCost = Math.Round(request.ExecutionDuration * CreditRatePerSecond, 2);
 
         await _jobRepository.UpdateAsync(jobEntity);
 
@@ -108,7 +127,7 @@ public class JobServices(IJobRepository jobRepository) : IJobServices
             OutputFileReference = jobEntity.OutputFileReference
         };
 
-        return ApiResponse<JobModelBase>.SuccessResponse(resultPayload, "Job successfully finalized and credit billing applied.");
+        return ApiResponse<JobModelBase>.SuccessResponse(resultPayload, "Job successfully finalized and cloud credit billing applied.");
     }
 
     public async Task<ApiResponse<BillingSummaryResponse>> GetBillingSummaryAsync(BillingSummaryFilterRequest filter)
@@ -153,12 +172,10 @@ public class JobServices(IJobRepository jobRepository) : IJobServices
         return ApiResponse<BillingSummaryResponse>.SuccessResponse(summaryData, "Billing summary aggregated and paged successfully.");
     }
 
-    #region Helper Methods (Senior Clean Code Clean-up)
+    #region Helper Methods
 
-    private static string ComputeRequestHash(CreateJobRequest request)
+    private static string ComputeRequestHash(string rawData)
     {
-        string rawData = $"{request.JobName}_{request.ProjectId}_{request.ComputeType}_{request.InputFileName}";
-
         using var sha256 = SHA256.Create();
         byte[] bytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(rawData));
         return Convert.ToHexString(bytes);
