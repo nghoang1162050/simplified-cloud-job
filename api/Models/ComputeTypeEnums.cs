@@ -1,6 +1,4 @@
-﻿using System.Runtime.Serialization;
-
-namespace api.Models;
+﻿namespace api.Models;
 
 public enum ComputeTypeEnums
 {

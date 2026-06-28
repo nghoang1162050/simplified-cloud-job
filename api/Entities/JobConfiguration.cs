@@ -22,6 +22,11 @@ public class JobConfiguration : IEntityTypeConfiguration<JobEntity>
             .IsRequired();
 
         builder.Property(j => j.Status).HasColumnName("Status").HasColumnType("varchar(50)").IsRequired();
+        builder.Property(j => j.InputFileName)
+            .HasColumnName("InputFileName")
+            .HasColumnType("nvarchar(255)")
+            .IsRequired()
+            .HasDefaultValue("");
         builder.Property(j => j.OutputFileReference).HasColumnName("OutputFileReference").HasColumnType("nvarchar(1000)");
         builder.Property(j => j.ExecutionDuration).HasColumnName("ExecutionDuration");
         builder.Property(j => j.CreditCost).HasColumnName("CreditCost");

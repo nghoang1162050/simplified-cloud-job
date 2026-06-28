@@ -3,5 +3,6 @@
 public record BillingSummaryResponse(
     double TotalCreditsUsed,
     int TotalCompletedJobs,
-    List<JobModel> BilledJobs
+    IReadOnlyCollection<JobModel> BilledJobs,
+    PagedMetadata Pagination
 );
