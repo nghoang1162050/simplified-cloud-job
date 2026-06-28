@@ -38,8 +38,9 @@ public class JobsController(IJobServices jobServices) : ControllerBase
     }
 
     [HttpPost("{id}/complete")]
+    [Consumes("multipart/form-data")]
     [EndpointSummary("Webhook called by AWS EC2 to finalize job and process billing")]
-    public async Task<IActionResult> CompleteJob([FromRoute] string id, [FromBody] CompleteJobRequest request)
+    public async Task<IActionResult> CompleteJob([FromRoute] string id, [FromForm] CompleteJobRequest request)
     {
         var response = await _jobServices.CompleteJobAsync(id, request);
         return Ok(response);

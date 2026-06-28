@@ -1,4 +1,5 @@
 using Amazon.S3;
+using Amazon.SimpleSystemsManagement;
 using api.Configurations;
 using api.Entities;
 using api.Models;
@@ -15,11 +16,15 @@ builder.Services.AddOptions<AwsSettings>()
     .Bind(builder.Configuration.GetSection(AwsSettings.SectionName))
     .Validate(settings => !string.IsNullOrWhiteSpace(settings.BucketName), "AWS BucketName is required.")
     .Validate(settings => !string.IsNullOrWhiteSpace(settings.Region), "AWS Region is required.")
+    .Validate(settings => !string.IsNullOrWhiteSpace(settings.TargetEc2InstanceId), "AWS Target EC2 Instance ID is required.")
+    .Validate(settings => !string.IsNullOrWhiteSpace(settings.ApiBaseUrl), "AWS API Base URL is required.")
     .ValidateOnStart();
 
 // Add external services for dependency injection
 builder.Services.AddAWSService<IAmazonS3>();
+builder.Services.AddAWSService<IAmazonSimpleSystemsManagement>();
 builder.Services.AddScoped<IStorageService, S3StorageService>();
+builder.Services.AddScoped<IComputeExecutionService, AwsSsmComputeService>();
 
 // Add database context for Entity Framework Core with SQL Server
 builder.Services.AddDbContext<AppDbContext>(options =>

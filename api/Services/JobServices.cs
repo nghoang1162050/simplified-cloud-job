@@ -1,15 +1,23 @@
-﻿using api.Entities;
+﻿using api.Configurations;
+using api.Entities;
 using api.Models;
 using api.Repositories;
+using Microsoft.Extensions.Options;
 using System.Security.Cryptography;
 using System.Text;
 
 namespace api.Services;
 
-public class JobServices(IJobRepository jobRepository, IStorageService storageService) : IJobServices
+public class JobServices(
+    IJobRepository jobRepository, 
+    IStorageService storageService, 
+    IComputeExecutionService computeExecutionService,
+    IOptions<AwsSettings> awsOptions) : IJobServices
 {
     private readonly IJobRepository _jobRepository = jobRepository;
     private readonly IStorageService _storageService = storageService;
+    private readonly IComputeExecutionService _computeExecutionService = computeExecutionService;
+    private readonly AwsSettings _awsSettings = awsOptions.Value;
 
     public async Task<ApiResponse<JobModel>> SubmitJobAsync(CreateJobRequest request)
     {
@@ -60,7 +68,20 @@ public class JobServices(IJobRepository jobRepository, IStorageService storageSe
             CreatedAt = newJobEntity.CreatedAt
         };
 
-        return ApiResponse<JobModel>.SuccessResponse(jobModel, "Job submitted successfully");
+        // Trigger EC2 job execution (this is a placeholder; actual implementation would depend on your EC2 setup)
+        string apiBaseUrl = _awsSettings.ApiBaseUrl;
+        string bashCommand = BuildEc2UtcTimestampAndCompleteCommand(newJobEntity.JobId, apiBaseUrl);
+
+        try
+        {
+            await _computeExecutionService.TriggerRemoteCommandAsync(bashCommand);
+        }
+        catch (Exception ex)
+        {
+            return ApiResponse<JobModel>.ErrorResponse($"Job created, but EC2 execution loop failed: {ex.Message}");
+        }
+
+        return ApiResponse<JobModel>.SuccessResponse(MapToJobModel(newJobEntity), "Job submitted and automation loop triggered.");
     }
 
     public async Task<ApiResponse<JobModel>> GetJobStatusAsync(string jobId)
@@ -193,6 +214,19 @@ public class JobServices(IJobRepository jobRepository, IStorageService storageSe
             Status = entity.Status.ToString(),
             CreatedAt = entity.CreatedAt
         };
+    }
+
+    private static string BuildEc2UtcTimestampAndCompleteCommand(string jobId, string apiBaseUrl)
+    {
+        string targetFilePath = $"/home/ubuntu/job_{jobId}.txt";
+
+        string logCommand = $"date -u +'Hi there, it''s %d/%m/%Y %H:%M:%S UTC now!' > {targetFilePath}";
+
+        string curlCommand = $"curl -X POST \"{apiBaseUrl.TrimEnd('/')}/api/jobs/{jobId}/complete\" " +
+                             $"-F \"ExecutionDuration=5\" " +
+                             $"-F \"OutputFile=@{targetFilePath}\"";
+
+        return $"{logCommand} && {curlCommand}";
     }
 
     #endregion
