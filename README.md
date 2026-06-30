@@ -213,29 +213,25 @@ The current solution is intentionally small. For production, I would evolve it i
 
 ```mermaid
 flowchart LR
-	User[User] --> FE[React FE]
-	FE -->|login / submit / view| API[ASP.NET Core BE]
+    User[User] -->|Authenticates with JWT\nConfigures Dynamic Settings\nSelects Job Type| FE[ReactJS Frontend]
+    
+    subgraph Core[Core Infrastructure]
+        FE -->|REST Requests\nPOST, GET by ID, GET List| API[ASP.NET Core Web API]
+        API --> Redis[(Redis Cache)]
+        API --> RDS[(Amazon RDS)]
+        API --> S3[(Amazon S3)]
+    end
 
-	subgraph Core[Request Path]
-		API --> Redis[(Redis Cache)]
-		API --> RDS[(Amazon RDS)]
-		API --> S3[(Amazon S3)]
-	end
+    subgraph Events[Event Brokerage]
+        EB[Amazon EventBridge\n_Tracks Machine & Job Status_] -->|Pushes Job Status Events| SQS[Amazon SQS Queue]
+        SQS -->|Triggers Lifecycle Updates: every 20s or on demand| API
+    end
 
-	subgraph Events[Eventing Path]
-		API --> EB[EventBridge]
-		EB --> SQS[SQS Queue]
-		SQS --> Worker[Worker Service]
-		Worker --> RDS
-		Worker --> Redis
-	end
+    subgraph Execution[Execution Orchestration]
+        API -->|Dispatches Computations| Batch[AWS Batch / Fargate]
+        Batch -->|Pulls Specific Container Image\nvia Business Logic| ECR[(Amazon ECR)]
+    end
 
-	subgraph Compute[Execution Path]
-		Worker --> Batch[AWS Batch / Fargate]
-		Batch --> ECR[(ECR Image Catalog)]
-		Batch --> S3
-		Batch --> RDS
-	end
 ```
 
 ### Frontend
