@@ -252,13 +252,47 @@ public class JobServices(
     /// </summary>
     private static void FinalizeJobEntityState(JobEntity jobEntity, int executionDuration, string s3OutputKey)
     {
-        // TODO: Migrate this hardcoded rate into a dynamic strategy configuration based on ComputeType in the future
-        const double CreditRatePerSecond = 0.05;
+        int cost;
+        int durationInMinutes = CalculateDurationInMinutes(executionDuration);
+
+        if (jobEntity.ComputeType == ComputeTypeEnums.CpuSmall)
+        {
+            cost = 1 * durationInMinutes;
+        }
+        else if (jobEntity.ComputeType == ComputeTypeEnums.CpuLarge)
+        {
+            cost = 2 * durationInMinutes;
+        }
+        else if (jobEntity.ComputeType == ComputeTypeEnums.Gpu)
+        {
+            cost = 8 * durationInMinutes;
+        }
 
         jobEntity.ExecutionDuration = executionDuration;
         jobEntity.OutputFileReference = s3OutputKey;
         jobEntity.Status = JobStatusEnums.Completed.ToString();
-        jobEntity.CreditCost = Math.Round(executionDuration * CreditRatePerSecond, 2);
+
+        // TODO
+        jobEntity.CreditCost = 111;
+    }
+
+    /// <summary>
+    /// returns the execution duration in minutes, rounded up to the nearest whole number.
+    /// </summary>
+    /// <param name="executionDurationInSeconds">seconds</param>
+    /// <returns></returns>
+    private static int CalculateDurationInMinutes(int executionDurationInSeconds)
+    {
+        int modPart = executionDurationInSeconds % 60;
+        int basePart = executionDurationInSeconds / 60;
+        int minutes = basePart;
+
+        if (modPart > 0)
+        {
+            minutes = 1 + basePart;
+        }
+
+        return minutes;
     }
 
     /// <summary>
